@@ -189,10 +189,20 @@ print(top_10_vehicles, row.names = FALSE)
 
 ## FIRST MODEL
 
-You can also embed plots, for example:
 
 ```{r pressure, echo=FALSE}
-plot(pressure)
+if (!require("rjags")) install.packages("rjags")
+if (!require("coda")) install.packages("coda")
+
+# Load packages:
+library(rjags)
+library(coda)
+```
+
+#### Data Preparartion (for SinceFirst case)
+
+```{r}
+
 ```
 
 ## SECOND MODEL
