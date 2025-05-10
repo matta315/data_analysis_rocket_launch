@@ -1,0 +1,198 @@
+---
+title: "Final - Rocket Launch Analysis"
+author: "Matta Nguyen"
+date: "2025-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Setup}
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(scales)
+```
+## DATA ANALYSIS
+
+```{r cars}
+# Read the data
+launches <- read.csv("launches.csv")
+
+cat("Structure of the dataset:\n")
+str(launches)
+```
+
+```{r statistic summary} 
+# Basic summary statistics for each variable (except Date)
+cat("\n\nSummary statistics for each variable:\n")
+summary(launches[, c("Vehicle", "SinceFirst", "Success")])
+```
+
+Create a data analysis table 
+
+```{r}
+# Create a table with the requested columns
+vehicle_summary <- data.frame(
+  Vehicle = character(),
+  Total_Launches = integer(),
+  Successful_Launches = integer(),
+  First_Launch_Success_Pct = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Get unique vehicle types
+unique_vehicles <- unique(launches$Vehicle)
+
+# For each vehicle, calculate the statistics
+for (vehicle in unique_vehicles) {
+  vehicle_launches <- launches[launches$Vehicle == vehicle, ]
+  total_launches <- nrow(vehicle_launches)
+  successful_launches <- sum(vehicle_launches$Success)
+  
+  # First launch success (1 if successful, 0 if not, NA if no data)
+  first_launch <- vehicle_launches[vehicle_launches$SinceFirst == 0, ]
+  first_launch_success <- if (nrow(first_launch) > 0) first_launch$Success[1] * 100 else NA
+  
+  # Add to the summary table
+  vehicle_summary <- rbind(vehicle_summary, data.frame(
+    Vehicle = vehicle,
+    Total_Launches = total_launches,
+    Successful_Launches = successful_launches,
+    First_Launch_Success_Pct = first_launch_success
+  ))
+}
+
+# Sort by total launches (descending)
+vehicle_summary <- vehicle_summary[order(-vehicle_summary$Total_Launches), ]
+
+# Format the First_Launch_Success_Pct column to show percentages
+vehicle_summary$First_Launch_Success_Pct <- ifelse(
+  is.na(vehicle_summary$First_Launch_Success_Pct),
+  "N/A",
+  paste0(vehicle_summary$First_Launch_Success_Pct, "%")
+)
+
+# Print the table
+print(vehicle_summary, row.names = FALSE)
+
+# Calculate overall statistics
+total_launches <- nrow(launches)
+total_successes <- sum(launches$Success)
+overall_success_rate <- round(total_successes / total_launches * 100, 1)
+
+first_attempts <- launches[launches$SinceFirst == 0, ]
+first_attempt_success_rate <- round(mean(first_attempts$Success) * 100, 1)
+
+cat("\nOverall Statistics:\n")
+cat("Total launches:", total_launches, "\n")
+cat("Total successful launches:", total_successes, "\n")
+cat("Overall success rate:", overall_success_rate, "%\n")
+cat("First attempt success rate:", first_attempt_success_rate, "%\n")
+
+
+```
+
+#### Proportion of launch success
+
+```{r % of success}
+overall_success_rate <- mean(launches$Success)
+cat("\n\nOverall proportion of successful launches:", 
+    round(overall_success_rate * 100, 2), "%")
+```
+
+
+
+#### Proportion of launched success with first attemps
+
+```{r}
+# Success rate for first attempts (where SinceFirst = 0)
+first_attempts <- launches[launches$SinceFirst == 0, ]
+first_attempt_success_rate <- mean(first_attempts$Success)
+cat("\nOverall proportion of successful launches among first attempts:", 
+    round(first_attempt_success_rate * 100, 2), "%")
+
+```
+
+#### Vehicle with the most launch:
+```{r}
+# Vehicle with the most launches
+launch_counts <- table(launches$Vehicle)
+most_launches <- names(launch_counts)[which.max(launch_counts)]
+cat("\nVehicle type with the most launches:", most_launches, 
+    "with", max(launch_counts), "launches")
+```
+
+#### Type that has the grestest appreant successful rate:
+
+```{r}
+# TABLE FOR SUCCESSFUL RATE TO DISPLAY ON PAPER
+# Filter for vehicles with at least 3 launches for more reliable success rate
+success_rate_stats <- vehicle_stats[vehicle_stats$Launches >= 3, ]
+
+# Sort by success rate (descending)
+success_rate_stats <- success_rate_stats[order(-success_rate_stats$Success), ]
+
+# Get top 10 vehicles by success rate
+top_10_success <- head(success_rate_stats, 10)
+
+# Format the table for better presentation
+top_10_success_table <- data.frame(
+  "Vehicle" = top_10_success$Vehicle,
+  "Total_Launches" = top_10_success$Launches,
+  "Successful_Launches" = top_10_success$Successes,
+  "Success_Rate" = paste0(round(top_10_success$Success * 100, 1), "%")
+)
+
+# Rename columns for display
+colnames(top_10_success_table) <- c("Vehicle", "Total Launches", "Successful Launches", "Success Rate")
+
+# Print the table with a title
+cat("\n\n=== TOP 10 VEHICLES BY SUCCESS RATE (MIN 3 LAUNCHES) ===\n\n")
+print(top_10_success_table, row.names = FALSE)
+
+# Add a note about the minimum launch threshold
+cat("\nNote: Only vehicles with at least 3 launches are included to ensure reliable success rates.\n")
+
+
+```
+Based on this table and information, Long March 6 tends to have the most successful reliable rate since they have the 100% launch within 24 launches in the trackable timeframe
+
+#### Summary Table to use for paper
+
+```{r}
+# Get only the top 7 vehicles by total launches
+top_10_vehicles <- head(vehicle_summary, 10)
+
+# Format the First_Launch_Success_Pct column to show percentages
+top_10_vehicles$First_Launch_Success_Pct <- ifelse(
+  is.na(top_10_vehicles$First_Launch_Success_Pct),
+  "N/A",
+  paste0(top_10_vehicles$First_Launch_Success_Pct, "%")
+)
+
+# Calculate success rate as a percentage
+top_10_vehicles$Success_Rate_Pct <- round(top_10_vehicles$Successful_Launches / top_10_vehicles$Total_Launches * 100, 1)
+top_10_vehicles$Success_Rate_Pct <- paste0(top_10_vehicles$Success_Rate_Pct, "%")
+
+# Reorder columns for better presentation
+top_10_vehicles <- top_10_vehicles[, c("Vehicle", "Total_Launches", "Successful_Launches", "Success_Rate_Pct", "First_Launch_Success_Pct")]
+colnames(top_10_vehicles) <- c("Vehicle", "Total Launches", "Successful Launches", "Success Rate", "First Launch Success")
+
+# Print the table with a title
+cat("\n=== TOP 7 VEHICLES BY TOTAL LAUNCHES ===\n\n")
+print(top_10_vehicles, row.names = FALSE)
+
+```
+
+## FIRST MODEL
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+## SECOND MODEL
