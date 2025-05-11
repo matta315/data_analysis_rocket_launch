@@ -1,0 +1,31 @@
+
+model {
+  # Likelihood
+  for (i in 1:N) {
+    Success[i] ~ dbern(p[i])
+    logit(p[i]) <- beta0 + beta1 * x[i] + vehicle_effect[vehicle_id[i]]
+  }
+  
+  # Priors for fixed effects
+  # t1(0, 10^2) for intercept - using dt with 1 degree of freedom
+  beta0 ~ dt(0, 1/100, 1)  # precision = 1/variance, df = 1
+  
+  # t1(0, 2.5^2) for slope - using dt with 1 degree of freedom
+  beta1 ~ dt(0, 1/6.25, 1)  # precision = 1/variance, df = 1
+  
+  # Random effects for vehicle types
+  for (j in 1:n_vehicles) {
+    vehicle_effect[j] ~ dnorm(0, tau_vehicle)
+  }
+  
+  # Hyperprior for random effects standard deviation
+  # Using a half-Cauchy prior which is approximately flat on (0, infinity)
+  tau_vehicle <- pow(sigma_vehicle, -2)  # Convert SD to precision
+  sigma_vehicle ~ dt(0, 1/25, 1)T(0,)  # Half-t with 1 df (half-Cauchy), truncated at 0
+  
+  # For identifying the most reliable vehicle
+  for (j in 1:n_vehicles) {
+    is_max[j] <- equals(vehicle_effect[j], max(vehicle_effect[]))
+  }
+}
+

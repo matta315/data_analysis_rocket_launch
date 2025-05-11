@@ -2,7 +2,9 @@
 title: "Final - Rocket Launch Analysis"
 author: "Matta Nguyen"
 date: "2025-05-10"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -202,7 +204,389 @@ library(coda)
 #### Data Preparartion (for SinceFirst case)
 
 ```{r}
+mean_since_first <- mean(launches$SinceFirst)
+sd_since_first <- sd(launches$SinceFirst)
+launches$SinceFirst_scaled <- (launches$SinceFirst - mean_since_first) / (2 * sd_since_first)
+```
+
+#### a. JAGs Build
+```{r}
+model_string <- "
+model {
+  # Likelihood
+  for (i in 1:N) {
+    Success[i] ~ dbern(p[i])
+    logit(p[i]) <- beta0 + beta1 * SinceFirst_scaled[i]
+  }
+  
+  # Priors
+  # t1(0, 10^2) for intercept - using dt with 1 degree of freedom
+  beta0 ~ dt(0, 1/100, 1)  # precision = 1/variance, df = 1
+  
+  # t1(0, 2.5^2) for slope - using dt with 1 degree of freedom
+  beta1 ~ dt(0, 1/6.25, 1)  # precision = 1/variance, df = 1
+}
+"
+
+# Write the model to a file
+writeLines(model_string, con = "logistic_model.txt")
+```
+
+#### b. Summarize details of computation
+
+```{r}
+# Prepare the data for JAGS
+jags_data <- list(
+  N = nrow(launches),
+  Success = launches$Success,
+  SinceFirst_scaled = launches$SinceFirst_scaled
+)
+
+# Set up the model
+jags_model <- jags.model(file = "logistic_model.txt", 
+                         data = jags_data, 
+                         n.chains = 4,
+                         n.adapt = 1000)
+
+# Burn-in
+update(jags_model, n.iter = 5000)
+
+# Sample from the posterior
+jags_samples <- coda.samples(jags_model, 
+                            variable.names = c("beta0", "beta1"),
+                            n.iter = 10000)
+```
+
+```{r}
+
+# Summarize the results
+summary_stats <- summary(jags_samples)
+print(summary_stats)
+
+```
+```{r plot model}
+# Plot the results
+plot(jags_samples)
+```
+
+#### c. Posterior Mean / Standard deviation and 95% central posterior interval
+
+```{r}
+# Convert to a data frame for easier handling
+all_samples <- do.call(rbind, jags_samples)
+
+# Calculate posterior means
+beta0_mean <- mean(all_samples[, "beta0"])
+beta1_mean <- mean(all_samples[, "beta1"])
+
+# Calculate posterior standard deviations
+beta0_sd <- sd(all_samples[, "beta0"])
+beta1_sd <- sd(all_samples[, "beta1"])
+
+# Calculate 95% central posterior intervals
+beta0_quantiles <- quantile(all_samples[, "beta0"], probs = c(0.025, 0.975))
+beta1_quantiles <- quantile(all_samples[, "beta1"], probs = c(0.025, 0.975))
+
+# Create a summary table for the coefficients
+coef_summary <- data.frame(
+  Parameter = c("beta0 (Intercept)", "beta1 (SinceFirst_scaled)"),
+  Mean = c(beta0_mean, beta1_mean),
+  SD = c(beta0_sd, beta1_sd),
+  `2.5%` = c(beta0_quantiles[1], beta1_quantiles[1]),
+  `97.5%` = c(beta0_quantiles[2], beta1_quantiles[2])
+)
+
+# Print the summary table
+cat("\nPosterior Summary for Regression Coefficients:\n")
+print(coef_summary, digits = 4)
+
+```
+#### d. Posterior probability that the "slope" coefficient related to first launch
+
+```{r}
+# Calculate the probability of success for first attempts (SinceFirst = 0)
+first_attempt_scaled <- (0 - mean_since_first) / (2 * sd_since_first)
+log_odds_first <- beta0_mean + beta1_mean * first_attempt_scaled
+prob_first <- exp(log_odds_first) / (1 + exp(log_odds_first))
+
+# Calculate the probability of success for attempts 1000 days after first
+later_attempt_scaled <- (1000 - mean_since_first) / (2 * sd_since_first)
+log_odds_later <- beta0_mean + beta1_mean * later_attempt_scaled
+prob_later <- exp(log_odds_later) / (1 + exp(log_odds_later))
+
+cat("Interpretation:\n")
+cat("Estimated probability of success for first attempts:", round(prob_first, 4), "\n")
+cat("Estimated probability of success 1000 days after first attempt:", round(prob_later, 4), "\n")
+```
+
+```{r}
+# Calculate the posterior probability that beta1 > 0
+prob_beta1_positive <- mean(all_samples[, "beta1"] > 0)
+cat("\nPosterior probability that beta1 (slope) > 0:", round(prob_beta1_positive * 100, 2), "%\n")
+
+# Interpret the result
+cat("\nInterpretation of slope coefficient:\n")
+if (prob_beta1_positive > 0.95) {
+  cat("There is strong evidence (", round(prob_beta1_positive * 100, 2), 
+      "% posterior probability) that launch vehicles become more reliable over time.\n", sep="")
+} else if (prob_beta1_positive > 0.9) {
+  cat("There is moderate evidence (", round(prob_beta1_positive * 100, 2), 
+      "% posterior probability) that launch vehicles become more reliable over time.\n", sep="")
+} else if (prob_beta1_positive > 0.75) {
+  cat("There is some evidence (", round(prob_beta1_positive * 100, 2), 
+      "% posterior probability) that launch vehicles become more reliable over time,\n", 
+      "but the evidence is not conclusive.\n", sep="")
+} else if (prob_beta1_positive > 0.5) {
+  cat("There is weak evidence (", round(prob_beta1_positive * 100, 2), 
+      "% posterior probability) that launch vehicles become more reliable over time,\n", 
+      "but there is substantial uncertainty.\n", sep="")
+} else if (prob_beta1_positive > 0.25) {
+  cat("There is weak evidence (", round((1-prob_beta1_positive) * 100, 2), 
+      "% posterior probability) that launch vehicles become less reliable over time,\n", 
+      "but there is substantial uncertainty.\n", sep="")
+} else if (prob_beta1_positive > 0.1) {
+  cat("There is some evidence (", round((1-prob_beta1_positive) * 100, 2), 
+      "% posterior probability) that launch vehicles become less reliable over time,\n", 
+      "but the evidence is not conclusive.\n", sep="")
+} else if (prob_beta1_positive > 0.05) {
+  cat("There is moderate evidence (", round((1-prob_beta1_positive) * 100, 2), 
+      "% posterior probability) that launch vehicles become less reliable over time.\n", sep="")
+} else {
+  cat("There is strong evidence (", round((1-prob_beta1_positive) * 100, 2), 
+      "% posterior probability) that launch vehicles become less reliable over time.\n", sep="")
+}
+```
+#### e. Probability of a successful launch on a first attempt
+
+```{r}
+
+mean_since_first <- mean(launches$SinceFirst)
+sd_since_first <- sd(launches$SinceFirst)
+first_attempt_scaled <- (0 - mean_since_first) / (2 * sd_since_first)
+
+# For each posterior sample, calculate the probability of success for first attempts
+n_samples <- nrow(all_samples)
+first_attempt_probs <- numeric(n_samples)
+
+for (i in 1:n_samples) {
+  beta0 <- all_samples[i, "beta0"]
+  beta1 <- all_samples[i, "beta1"]
+  
+  # Calculate log odds for first attempt
+  log_odds <- beta0 + beta1 * first_attempt_scaled
+  
+  # Convert to probability
+  first_attempt_probs[i] <- exp(log_odds) / (1 + exp(log_odds))
+}
+
+# Calculate the 95% central posterior interval
+first_attempt_interval <- quantile(first_attempt_probs, c(0.025, 0.975))
+
+# Print the results
+cat("\n95% Central Posterior Interval for Probability of Success on First Attempt:\n")
+cat("Lower bound (2.5%):", round(first_attempt_interval[1], 4), "\n")
+cat("Upper bound (97.5%):", round(first_attempt_interval[2], 4), "\n")
+
+# Calculate the posterior mean and standard deviation
+first_attempt_mean <- mean(first_attempt_probs)
+first_attempt_sd <- sd(first_attempt_probs)
+
+cat("Posterior mean:", round(first_attempt_mean, 4), "\n")
+cat("Posterior standard deviation:", round(first_attempt_sd, 4), "\n")
+
+```
+#### f. Value of Plummer's DIC and its associated effective number
+
+```{r}
+# Calculate DIC
+dic_result <- dic.samples(jags_model, n.iter = 5000)
+
+# Print the raw DIC result first to see its structure
+cat("\nRaw DIC result:\n")
+print(dic_result)
 
 ```
 
 ## SECOND MODEL
+
+Preparing data for 2nd model with ramdom effects
+
+```{r}
+# Center and rescale SinceFirst as specified
+mean_since_first <- mean(launches$SinceFirst)
+sd_since_first <- sd(launches$SinceFirst)
+since_first_scaled <- (launches$SinceFirst - mean_since_first) / (2 * sd_since_first) 
+
+# Create vehicle ID mapping
+unique_vehicles <- unique(launches$Vehicle)
+n_vehicles <- length(unique_vehicles)
+vehicle_map <- data.frame(
+  Vehicle = unique_vehicles,
+  VehicleID = 1:n_vehicles
+)
+
+# Add vehicle ID to the launches data
+launches$VehicleID <- match(launches$Vehicle, vehicle_map$Vehicle)
+```
+
+#### a. JAGs code:
+
+```{r}
+model_string <- "
+model {
+  # Likelihood
+  for (i in 1:N) {
+    Success[i] ~ dbern(p[i])
+    logit(p[i]) <- beta0 + beta1 * x[i] + vehicle_effect[vehicle_id[i]]
+  }
+  
+  # Priors for fixed effects
+  # t1(0, 10^2) for intercept - using dt with 1 degree of freedom
+  beta0 ~ dt(0, 1/100, 1)  # precision = 1/variance, df = 1
+  
+  # t1(0, 2.5^2) for slope - using dt with 1 degree of freedom
+  beta1 ~ dt(0, 1/6.25, 1)  # precision = 1/variance, df = 1
+  
+  # Random effects for vehicle types
+  for (j in 1:n_vehicles) {
+    vehicle_effect[j] ~ dnorm(0, tau_vehicle)
+  }
+  
+  # Hyperprior for random effects standard deviation
+  # Using a half-Cauchy prior which is approximately flat on (0, infinity)
+  tau_vehicle <- pow(sigma_vehicle, -2)  # Convert SD to precision
+  sigma_vehicle ~ dt(0, 1/25, 1)T(0,)  # Half-t with 1 df (half-Cauchy), truncated at 0
+  
+  # For identifying the most reliable vehicle
+  for (j in 1:n_vehicles) {
+    is_max[j] <- equals(vehicle_effect[j], max(vehicle_effect[]))
+  }
+}
+"
+
+# Write the model to a file
+writeLines(model_string, con = "logistic_model_with_random.txt")
+```
+
+```{r}
+# Prepare the data for JAGS
+jags_data <- list(
+  N = nrow(launches),
+  Success = launches$Success,
+  x = since_first_scaled,
+  vehicle_id = launches$VehicleID,
+  n_vehicles = n_vehicles
+)
+
+# Set up initial values for multiple chains with overdispersed starting values
+init_values <- function() {
+  list(
+    beta0 = rnorm(1, 0, 2),
+    beta1 = rnorm(1, 0, 1),
+    sigma_vehicle = runif(1, 0.1, 5),
+    vehicle_effect = rnorm(n_vehicles, 0, 1)
+  )
+}
+
+# Set up the model
+jags_model2 <- jags.model(file = "logistic_model_with_random.txt", 
+                         data = jags_data, 
+                         inits = list(init_values(), init_values(), init_values(), init_values()),
+                         n.chains = 4,
+                         n.adapt = 2000)
+
+# Burn-in
+update(jags_model2, n.iter = 10000)
+
+# Sample from the posterior with thinning
+jags_samples2 <- coda.samples(jags_model2, 
+                             variable.names = c("beta0", "beta1", "sigma_vehicle", 
+                                               "vehicle_effect", "is_max"),
+                             n.iter = 20000,
+                             thin = 10)  # Thinning to reduce autocorrelation
+
+```
+
+```{r}
+# Check convergence
+cat("Checking convergence...\n")
+gelman_diag <- gelman.diag(jags_samples2[, c("beta0", "beta1", "sigma_vehicle")])
+print(gelman_diag)
+
+# Calculate effective sample sizes
+eff_size <- effectiveSize(jags_samples2[, c("beta0", "beta1", "sigma_vehicle")])
+cat("\nEffective sample sizes:\n")
+print(eff_size)
+```
+#### c. pproximate the posterior mean, posterior standard deviation, and 95% central
+
+```{r}
+# Combine all chains
+all_samples <- do.call(rbind, jags_samples2)
+
+# Calculate posterior statistics for key parameters
+beta0_mean <- mean(all_samples[, "beta0"])
+beta0_sd <- sd(all_samples[, "beta0"])
+beta0_quantiles <- quantile(all_samples[, "beta0"], probs = c(0.025, 0.975))
+
+beta1_mean <- mean(all_samples[, "beta1"])
+beta1_sd <- sd(all_samples[, "beta1"])
+beta1_quantiles <- quantile(all_samples[, "beta1"], probs = c(0.025, 0.975))
+
+sigma_vehicle_mean <- mean(all_samples[, "sigma_vehicle"])
+sigma_vehicle_sd <- sd(all_samples[, "sigma_vehicle"])
+sigma_vehicle_quantiles <- quantile(all_samples[, "sigma_vehicle"], probs = c(0.025, 0.975))
+
+# Create a summary table for the parameters
+param_summary <- data.frame(
+  Parameter = c("beta0 (Intercept)", "beta1 (SinceFirst_scaled)", "sigma_vehicle"),
+  Mean = c(beta0_mean, beta1_mean, sigma_vehicle_mean),
+  SD = c(beta0_sd, beta1_sd, sigma_vehicle_sd),
+  `2.5%` = c(beta0_quantiles[1], beta1_quantiles[1], sigma_vehicle_quantiles[1]),
+  `97.5%` = c(beta0_quantiles[2], beta1_quantiles[2], sigma_vehicle_quantiles[2])
+)
+
+# Print the summary table
+cat("\nPosterior Summary for Key Parameters:\n")
+print(param_summary, digits = 4)
+```
+
+#### d. Density plot
+
+```{r}
+hist(all_samples[, "sigma_vehicle"], 
+     breaks = 30,
+     freq = FALSE,  # Plot density instead of frequency
+     main = "Posterior Density of sigma_vehicle",
+     xlab = "sigma_vehicle", 
+     ylab = "Density",
+     col = "lightblue",
+     border = "white")
+
+# Add mean and credible intervals
+abline(v = sigma_vehicle_mean, col = "red", lwd = 2)
+abline(v = sigma_vehicle_quantiles, col = "blue", lty = 2, lwd = 2)
+
+# Add legend
+legend("topright", 
+       legend = c("Posterior Mean", "95% Credible Interval"),
+       col = c("red", "blue"), 
+       lty = c(1, 2),
+       lwd = 2)
+
+```
+
+#### e. DIC:
+
+```{r}
+# Calculate DIC
+cat("\nCalculating DIC...\n")
+dic_result2 <- dic.samples(jags_model2, n.iter = 5000)
+dic_value2 <- sum(dic_result2$deviance) + sum(dic_result2$penalty)
+pd2 <- sum(dic_result2$penalty)  # Effective number of parameters
+
+# Print DIC results
+cat("\n=== DEVIANCE INFORMATION CRITERION (DIC) ===\n")
+cat("DIC value for Model 2:", round(dic_value2, 2), "\n")
+cat("Effective number of parameters (pD) for Model 2:", round(pd2, 2), "\n")
+```

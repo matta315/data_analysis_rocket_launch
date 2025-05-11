@@ -1,0 +1,15 @@
+
+model {
+  # Likelihood
+  for (i in 1:N) {
+    Success[i] ~ dbern(p[i])
+    logit(p[i]) <- beta0 + beta1 * x[i]  # Using x instead of SinceFirst_scaled
+  }
+  
+  # Priors
+  # t1(0, 10^2) for intercept - using dt with 1 degree of freedom
+  beta0 ~ dt(0, 1/100, 1)  # precision = 1/variance, df = 1
+  
+  # t1(0, 2.5^2) for slope - using dt with 1 degree of freedom
+  beta1 ~ dt(0, 1/6.25, 1)  # precision = 1/variance, df = 1
+}
